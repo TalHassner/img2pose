@@ -14,7 +14,7 @@ from PIL import Image
 from scipy.spatial.transform import Rotation
 
 from ._model import img2poseModel
-from ._weights import get_model_path, load_weights, load_weights_from_path
+from ._weights import get_pose_stats_paths, load_weights, load_weights_from_path
 
 # Type aliases
 ImageInput = Union[str, Path, Image.Image, np.ndarray]
@@ -180,16 +180,18 @@ class Img2Pose:
             _get_package_data_path("reference_3d_5_points_trans.npy")
         )
 
-        # Load model weights
+        # Load model weights and pose statistics
         if model_path:
             checkpoint = load_weights_from_path(model_path, device=str(self.device))
+            # Use default pose stats for custom models
+            self._pose_mean = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
+            self._pose_stddev = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
         else:
             checkpoint = load_weights(device=str(self.device))
-
-        # Extract pose statistics from checkpoint or use defaults
-        # The pre-trained model uses these specific values
-        self._pose_mean = np.array([0.0, 0.0, 0.0, 0.0, 0.0, 1.0])
-        self._pose_stddev = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+            # Load pose statistics from downloaded files
+            pose_mean_path, pose_stddev_path = get_pose_stats_paths()
+            self._pose_mean = np.load(pose_mean_path)
+            self._pose_stddev = np.load(pose_stddev_path)
 
         # Initialize model
         self._model = img2poseModel(

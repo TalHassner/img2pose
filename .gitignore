@@ -127,6 +127,7 @@ dmypy.json
 .pyre/
 
 # User
+.tmp/
 **/annotations/*
 **/datasets/*
 **/workspace/*

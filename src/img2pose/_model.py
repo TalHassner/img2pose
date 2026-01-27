@@ -81,7 +81,7 @@ class img2poseModel:
         # Create backbone with pretrained=False (we'll load our own weights)
         # Use weights=None for newer torchvision versions
         try:
-            backbone = resnet_fpn_backbone(f"resnet{self.depth}", weights=None)
+            backbone = resnet_fpn_backbone(backbone_name=f"resnet{self.depth}", weights=None)
         except TypeError:
             # Fallback for older torchvision versions
             backbone = resnet_fpn_backbone(f"resnet{self.depth}", pretrained=False)
