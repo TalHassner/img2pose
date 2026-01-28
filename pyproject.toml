@@ -46,6 +46,7 @@ dependencies = [
     "Pillow>=8.0.0",
     "scipy>=1.5.0",
     "gdown>=4.6.0",
+    "opencv-python>=4.0.0",
 ]
 
 [project.optional-dependencies]
@@ -56,12 +57,6 @@ dev = [
     "black>=23.0.0",
     "isort>=5.0.0",
     "mypy>=1.0.0",
-]
-visualization = [
-    "opencv-python>=4.0.0",
-]
-alignment = [
-    "opencv-python>=4.0.0",
 ]
 
 [project.urls]
