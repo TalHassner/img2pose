@@ -24,20 +24,12 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
-# Suppress torch.meshgrid deprecation warning (internal to PyTorch RPN)
-warnings.filterwarnings(
-    "ignore",
-    message="torch.meshgrid: in an upcoming release",
-    category=UserWarning,
-)
-
 # Suppress torchvision backbone_name positional argument warning
 warnings.filterwarnings(
     "ignore",
     message="Using 'backbone_name' as positional parameter",
     category=UserWarning,
 )
-
 
 __version__ = "1.0.0"
 __author__ = "Vitor Albiero"

@@ -52,11 +52,15 @@ dependencies = [
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
+    "pytest-mock>=3.0.0",
     "black>=23.0.0",
     "isort>=5.0.0",
     "mypy>=1.0.0",
 ]
 visualization = [
+    "opencv-python>=4.0.0",
+]
+alignment = [
     "opencv-python>=4.0.0",
 ]
 
@@ -87,10 +91,11 @@ profile = "black"
 line_length = 100
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
+exclude = ["torch"]
 
 [tool.coverage.run]
 source = ["src/img2pose"]
