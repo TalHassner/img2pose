@@ -22,6 +22,17 @@ def pytest_configure(config):
         sys.path.remove(src_path)
     sys.path.insert(0, src_path)
 
+    # Register custom markers
+    config.addinivalue_line(
+        "markers", "slow: marks tests as slow (deselect with '-m \"not slow\"')"
+    )
+    config.addinivalue_line(
+        "markers", "requires_weights: marks tests that need model weights"
+    )
+    config.addinivalue_line(
+        "markers", "requires_gpu: marks tests that need CUDA GPU"
+    )
+
 
 import numpy as np
 import pytest
@@ -79,3 +90,51 @@ def pose_reference_5():
     except FileNotFoundError:
         # Return random points for testing if file not found
         return np.random.randn(5, 3)
+
+
+@pytest.fixture
+def sample_images_batch():
+    """Create a batch of sample PIL images with different sizes."""
+    return [
+        Image.new("RGB", (640, 480), color="white"),
+        Image.new("RGB", (800, 600), color="gray"),
+        Image.new("RGB", (320, 240), color="black"),
+    ]
+
+
+@pytest.fixture
+def sample_arrays_batch():
+    """Create a batch of sample numpy arrays with different sizes."""
+    return [
+        np.ones((480, 640, 3), dtype=np.uint8) * 128,
+        np.ones((600, 800, 3), dtype=np.uint8) * 64,
+        np.ones((240, 320, 3), dtype=np.uint8) * 192,
+    ]
+
+
+@pytest.fixture
+def sample_5_landmarks():
+    """Create sample 2D landmarks [5, 2] for a frontal face."""
+    return np.array([
+        [130, 130],   # left_eye
+        [170, 130],   # right_eye
+        [150, 150],   # nose
+        [135, 175],   # mouth_left
+        [165, 175],   # mouth_right
+    ], dtype=np.float32)
+
+
+@pytest.fixture
+def sample_poses_batch():
+    """Create batch of 3 poses [3, 6]."""
+    return np.array([
+        [0.0, 0.0, 0.0, 0.0, 0.0, 1.0],   # Frontal
+        [0.3, 0.0, 0.0, 0.0, 0.0, 1.0],   # Slight pitch
+        [0.0, 0.5, 0.0, 0.0, 0.0, 1.0],   # Yaw (profile-ish)
+    ], dtype=np.float32)
+
+
+@pytest.fixture
+def sample_aligned_face():
+    """Create sample 224x224 aligned face array."""
+    return np.ones((224, 224, 3), dtype=np.uint8) * 128

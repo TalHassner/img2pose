@@ -136,3 +136,7 @@ dmypy.json
 **/models/*
 *.json
 *.sge
+.plans/
+tests/
+download/
+.impl/

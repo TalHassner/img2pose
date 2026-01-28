@@ -5,6 +5,19 @@ All notable changes to the img2pose library will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Batch processing now uses efficient single-pass inference instead of sequential processing
+- Performance improvement: batch processing N images is now significantly faster than N individual calls
+
+### Technical Notes
+
+- Internal refactoring: extracted `_process_prediction()` helper for code reuse
+- Internal addition: `_detect_batch()` method for batched model calls
+- No API changes: all public interfaces remain unchanged
+
 ## [1.0.0] - 2025-01-27
 
 ### Added

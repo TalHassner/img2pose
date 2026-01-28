@@ -152,6 +152,42 @@ predictions = model.predict([image_tensor])
 # Returns: {"boxes": [N,4], "scores": [N], "dofs": [N,6], "landmarks": [N,68,2]}
 ```
 
+### Face Alignment
+
+The library also supports face alignment - producing cropped, normalized face images from detected faces:
+
+```python
+from img2pose import Img2Pose
+from PIL import Image
+
+# Initialize detector
+detector = Img2Pose()
+
+# Detect and align in one step (convenient for simple pipelines)
+results = detector.detect_and_align("group_photo.jpg")
+for i, face_data in enumerate(results):
+    face_data["image"].save(f"aligned_face_{i}.jpg")
+    print(f"Face {i}: confidence={face_data['confidence']:.2f}")
+
+# Or detect and align separately (for more control)
+image = Image.open("photo.jpg")
+faces = detector.detect_faces(image)
+aligned_crops = detector.align_faces(image, faces, output_size=224)
+for i, crop in enumerate(aligned_crops):
+    crop.save(f"face_{i}.jpg")
+
+# Batch processing for training pipelines
+images = ["img1.jpg", "img2.jpg", "img3.jpg"]
+all_faces = detector.detect_faces(images)
+all_aligned = detector.align_faces_batch(images, all_faces, return_array=True)
+# all_aligned[i] contains numpy arrays for faces in images[i]
+```
+
+**Note:** Face alignment requires opencv-python. Install with:
+```bash
+pip install img2pose[alignment]
+```
+
 ## Key Concepts
 
 - **6DoF pose**: Rotation vector (axis-angle) + translation vector, normalized using pose mean/stddev

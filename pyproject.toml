@@ -52,11 +52,15 @@ dependencies = [
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
+    "pytest-mock>=3.0.0",
     "black>=23.0.0",
     "isort>=5.0.0",
     "mypy>=1.0.0",
 ]
 visualization = [
+    "opencv-python>=4.0.0",
+]
+alignment = [
     "opencv-python>=4.0.0",
 ]
 
@@ -87,7 +91,27 @@ profile = "black"
 line_length = 100
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
+exclude = ["torch"]
+
+[tool.coverage.run]
+source = ["src/img2pose"]
+branch = true
+omit = [
+    "*/tests/*",
+    "*/__pycache__/*",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
+# Note: fail_under is not set globally since coverage varies by module
+# Use --cov-fail-under=80 with --cov=src/img2pose/detector for detector.py checks
+show_missing = true

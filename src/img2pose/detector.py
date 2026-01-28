@@ -6,7 +6,7 @@ img2pose for face detection and 6DoF pose estimation.
 
 import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union, cast
 
 import numpy as np
 import torch
@@ -19,6 +19,7 @@ from ._weights import get_pose_stats_paths, load_weights, load_weights_from_path
 # Type aliases
 ImageInput = Union[str, Path, Image.Image, np.ndarray]
 FaceDict = Dict[str, Any]
+AlignedFaceDict = Dict[str, Any]  # {"image": PIL.Image/np.ndarray, "box": ..., ...}
 
 
 def _get_package_data_path(filename: str) -> Path:
@@ -241,12 +242,87 @@ class Img2Pose:
 
         # Handle batch input
         if isinstance(image, list):
-            return [
-                self._detect_single(img, threshold, max_count)
-                for img in image
-            ]
+            if len(image) == 0:
+                return []
+            if len(image) == 1:
+                # Single-element batch: avoid batch overhead
+                return [self._detect_single(image[0], threshold, max_count)]
+            # Multi-element batch: use efficient batched inference
+            return self._detect_batch(image, threshold, max_count)
 
         return self._detect_single(image, threshold, max_count)
+
+    def _process_prediction(
+        self,
+        pred: Dict[str, torch.Tensor],
+        width: int,
+        height: int,
+        threshold: float,
+        max_count: int,
+    ) -> List[FaceDict]:
+        """Process a single prediction dict into face dictionaries.
+
+        This method converts raw model output into the standardized FaceDict
+        format, applying threshold filtering, confidence sorting, and max_count
+        limiting.
+
+        Args:
+            pred: Model prediction dict with keys:
+                - "boxes": Tensor of shape [N, 4] with xyxy bounding boxes
+                - "scores": Tensor of shape [N] with confidence scores
+                - "dofs": Tensor of shape [N, 6] with 6DoF poses
+            width: Original image width (for landmark projection)
+            height: Original image height (for landmark projection)
+            threshold: Minimum confidence score (faces below are excluded)
+            max_count: Maximum faces to return (-1 for unlimited)
+
+        Returns:
+            List of face dictionaries sorted by confidence (descending).
+            Each dict contains: box, confidence, pose, keypoints.
+        """
+        faces = []
+        boxes = pred["boxes"].cpu().numpy()
+        scores = pred["scores"].cpu().numpy()
+        dofs = pred["dofs"].cpu().numpy()
+
+        for i in range(len(boxes)):
+            if scores[i] < threshold:
+                continue
+
+            # Extract box
+            box = boxes[i].tolist()
+
+            # Extract pose
+            pose = dofs[i].tolist()
+
+            # Compute keypoints by projecting 3D landmarks
+            landmarks_2d = _project_landmarks(
+                self._threed_68_points,
+                dofs[i],
+                width,
+                height,
+            )
+
+            keypoints = {
+                name: landmarks_2d[idx].tolist()
+                for name, idx in self._KEYPOINT_INDICES.items()
+            }
+
+            faces.append({
+                "box": box,
+                "confidence": float(scores[i]),
+                "pose": pose,
+                "keypoints": keypoints,
+            })
+
+        # Sort by confidence (descending)
+        faces.sort(key=lambda x: x["confidence"], reverse=True)
+
+        # Limit number of faces
+        if max_count > 0:
+            faces = faces[:max_count]
+
+        return faces
 
     def _detect_single(
         self,
@@ -266,51 +342,60 @@ class Img2Pose:
         predictions = self._model.predict([img_tensor])
 
         # Process results
-        faces = []
-        if len(predictions) > 0:
-            pred = predictions[0]
-            boxes = pred["boxes"].cpu().numpy()
-            scores = pred["scores"].cpu().numpy()
-            dofs = pred["dofs"].cpu().numpy()
+        if len(predictions) == 0:
+            return []
+        return self._process_prediction(predictions[0], width, height, threshold, max_count)
 
-            for i in range(len(boxes)):
-                if scores[i] < threshold:
-                    continue
+    def _detect_batch(
+        self,
+        images: List[ImageInput],
+        threshold: float,
+        max_count: int,
+    ) -> List[List[FaceDict]]:
+        """Detect faces in a batch of images efficiently.
 
-                # Extract box
-                box = boxes[i].tolist()
+        This method processes all images in a single model forward pass,
+        which is more efficient than calling _detect_single() repeatedly.
+        The underlying FasterDoFRCNN model natively supports batch inference.
 
-                # Extract pose
-                pose = dofs[i].tolist()
+        Args:
+            images: List of input images. Each can be:
+                - File path (str or Path)
+                - PIL Image
+                - Numpy array (RGB uint8 HWC)
+            threshold: Minimum confidence score for detections
+            max_count: Maximum faces per image (-1 for unlimited)
 
-                # Compute keypoints by projecting 3D landmarks
-                landmarks_2d = _project_landmarks(
-                    self._threed_68_points,
-                    dofs[i],
-                    width,
-                    height,
-                )
+        Returns:
+            List of face lists, one per input image. Order matches input order.
+            Each face list contains FaceDict objects with: box, confidence,
+            pose, keypoints.
 
-                keypoints = {
-                    name: landmarks_2d[idx].tolist()
-                    for name, idx in self._KEYPOINT_INDICES.items()
-                }
+        Note:
+            For a single image, use _detect_single() to avoid batch overhead.
+            The detect_faces() method handles this routing automatically.
+        """
+        # Step 1: Load all images and capture dimensions
+        pil_images: List[Image.Image] = []
+        dimensions: List[tuple] = []  # List of (width, height)
+        for img in images:
+            pil_img = _load_image(img)
+            pil_images.append(pil_img)
+            dimensions.append(pil_img.size)
 
-                faces.append({
-                    "box": box,
-                    "confidence": float(scores[i]),
-                    "pose": pose,
-                    "keypoints": keypoints,
-                })
+        # Step 2: Convert all to tensors
+        tensors = [_image_to_tensor(pil_img, self.device) for pil_img in pil_images]
 
-        # Sort by confidence (descending)
-        faces.sort(key=lambda x: x["confidence"], reverse=True)
+        # Step 3: Single batched model call
+        predictions = self._model.predict(tensors)
 
-        # Limit number of faces
-        if max_count > 0:
-            faces = faces[:max_count]
+        # Step 4: Post-process each prediction with its corresponding dimensions
+        all_faces: List[List[FaceDict]] = []
+        for pred, (width, height) in zip(predictions, dimensions):
+            faces = self._process_prediction(pred, width, height, threshold, max_count)
+            all_faces.append(faces)
 
-        return faces
+        return all_faces
 
     def __call__(
         self,
@@ -357,7 +442,7 @@ class Img2Pose:
 
         # Run detection if not provided
         if faces is None:
-            faces = self.detect_faces(image)
+            faces = cast(List[FaceDict], self.detect_faces(image))
 
         # Draw and return
         return draw_detections(
@@ -370,3 +455,189 @@ class Img2Pose:
             keypoint_color=keypoint_color,
             thickness=thickness,
         )
+
+    def align_faces(
+        self,
+        image: ImageInput,
+        faces: List[FaceDict],
+        output_size: int = 224,
+        return_array: bool = False,
+    ) -> List[Union[Image.Image, np.ndarray]]:
+        """Align detected faces from an image.
+
+        Takes detection results and produces cropped, normalized face images
+        using 2D similarity transform alignment.
+
+        Args:
+            image: Original image (must match the image used for detection)
+            faces: Detection results from detect_faces()
+            output_size: Output image size (112 or 224)
+            return_array: If True, return numpy arrays instead of PIL Images
+
+        Returns:
+            List of aligned face images, one per input face.
+            Order matches input faces list.
+
+        Raises:
+            ImportError: If opencv-python not installed
+            ValueError: If output_size not in {112, 224}
+
+        Example:
+            >>> detector = Img2Pose()
+            >>> faces = detector.detect_faces("photo.jpg")
+            >>> aligned = detector.align_faces("photo.jpg", faces)
+            >>> for i, crop in enumerate(aligned):
+            ...     crop.save(f"face_{i}.jpg")
+        """
+        # Validate output_size
+        if output_size not in (112, 224):
+            raise ValueError(f"output_size must be 112 or 224, got {output_size}")
+
+        # Handle empty faces
+        if len(faces) == 0:
+            return []
+
+        # Import alignment module (raises ImportError if no opencv)
+        from ._alignment import align_faces_from_image
+
+        # Load image and convert to numpy
+        pil_image = _load_image(image)
+        img_array = np.array(pil_image)
+
+        # Extract poses as numpy array [N, 6]
+        poses = np.array([face["pose"] for face in faces], dtype=np.float32)
+
+        # Align faces
+        aligned_arrays = align_faces_from_image(
+            img_array,
+            poses,
+            self._threed_5_points,
+            output_size,
+        )
+
+        # Convert to PIL if requested
+        if return_array:
+            return list(aligned_arrays)
+        else:
+            return [Image.fromarray(arr) for arr in aligned_arrays]
+
+    def align_faces_batch(
+        self,
+        images: List[ImageInput],
+        faces_per_image: List[List[FaceDict]],
+        output_size: int = 224,
+        return_array: bool = False,
+    ) -> List[List[Union[Image.Image, np.ndarray]]]:
+        """Align faces from multiple images.
+
+        Efficient batch version for training/inference pipelines.
+
+        Args:
+            images: List of images
+            faces_per_image: Detection results per image (from detect_faces batch)
+            output_size: Output image size
+            return_array: If True, return numpy arrays
+
+        Returns:
+            Nested list: [[crops for image 0], [crops for image 1], ...]
+
+        Example:
+            >>> detector = Img2Pose()
+            >>> images = ["img1.jpg", "img2.jpg", "img3.jpg"]
+            >>> all_faces = detector.detect_faces(images)
+            >>> all_aligned = detector.align_faces_batch(images, all_faces)
+            >>> # all_aligned[0] = aligned faces from img1.jpg
+        """
+        if len(images) != len(faces_per_image):
+            raise ValueError(
+                f"images and faces_per_image must have same length, "
+                f"got {len(images)} and {len(faces_per_image)}"
+            )
+
+        results = []
+        for img, faces in zip(images, faces_per_image):
+            aligned = self.align_faces(img, faces, output_size, return_array)
+            results.append(aligned)
+        return results
+
+    def detect_and_align(
+        self,
+        image: Union[ImageInput, List[ImageInput]],
+        output_size: int = 224,
+        score_threshold: Optional[float] = None,
+        max_faces: Optional[int] = None,
+        return_array: bool = False,
+    ) -> Union[List[AlignedFaceDict], List[List[AlignedFaceDict]]]:
+        """Detect faces and align them in one call.
+
+        Convenience method combining detect_faces() and align_faces().
+        Useful for pipelines where you want both detection metadata
+        and aligned crops.
+
+        Args:
+            image: Input image(s)
+            output_size: Alignment output size
+            score_threshold: Detection threshold override
+            max_faces: Max faces per image override
+            return_array: If True, aligned images are numpy arrays
+
+        Returns:
+            For single image: List of dicts with keys:
+                - "image": Aligned face (PIL.Image or np.ndarray)
+                - "box": Original bounding box [x1, y1, x2, y2]
+                - "confidence": Detection confidence
+                - "pose": 6DoF pose
+                - "keypoints": Facial keypoints
+
+            For batch: List of lists of such dicts.
+
+        Example:
+            >>> detector = Img2Pose()
+            >>> results = detector.detect_and_align("photo.jpg")
+            >>> for face in results:
+            ...     face["image"].save(f"aligned_{face['confidence']:.2f}.jpg")
+        """
+        # Detect faces
+        is_batch = isinstance(image, list)
+        if is_batch:
+            images = cast(List[ImageInput], image)
+            all_faces_batch = cast(
+                List[List[FaceDict]],
+                self.detect_faces(images, score_threshold, max_faces)
+            )
+            all_aligned = self.align_faces_batch(
+                images, all_faces_batch, output_size, return_array
+            )
+
+            # Combine into AlignedFaceDict
+            results: List[List[AlignedFaceDict]] = []
+            for faces_list, aligned_crops in zip(all_faces_batch, all_aligned):
+                image_results: List[AlignedFaceDict] = []
+                for face, crop in zip(faces_list, aligned_crops):
+                    image_results.append({
+                        "image": crop,
+                        "box": face["box"],
+                        "confidence": face["confidence"],
+                        "pose": face["pose"],
+                        "keypoints": face["keypoints"],
+                    })
+                results.append(image_results)
+            return results
+        else:
+            faces = cast(
+                List[FaceDict],
+                self.detect_faces(image, score_threshold, max_faces)
+            )
+            aligned_crops = self.align_faces(image, faces, output_size, return_array)
+
+            # Combine into AlignedFaceDict
+            single_results: List[AlignedFaceDict] = []
+            for face, crop in zip(faces, aligned_crops):
+                single_results.append({
+                    "image": crop,
+                    "box": face["box"],
+                    "confidence": face["confidence"],
+                    "pose": face["pose"],
+                    "keypoints": face["keypoints"],
+                })
+            return single_results
