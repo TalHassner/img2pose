@@ -143,4 +143,4 @@ dmypy.json
 .plans/
 tests/
 models/
-CHANGELOG.md
+.impl
