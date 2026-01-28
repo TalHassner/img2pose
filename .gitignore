@@ -140,6 +140,7 @@ dmypy.json
 # misc temporary
 .tmp/
 .archive/
+.plans/
 tests/
 models/
 CHANGELOG.md
